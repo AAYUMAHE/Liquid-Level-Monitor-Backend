@@ -1,0 +1,2151 @@
+<template>
+  <div class="dashboard">
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon"></div>
+        <span>LIQUID LEVEL MONITOR</span>
+      </div>
+      <div class="header-status">
+        <span class="status-dot" :class="statusClass"></span>
+        <span>{{ status }}</span>
+      </div>
+    </header>
+
+    <main class="main-grid">
+
+      <div class="left-column">
+
+        <div class="card video-card">
+          <div class="card-header">
+            <span class="card-title">{{ isRunning ? 'LIVE MONITOR' : 'VIDEO SOURCE' }}</span>
+            <span class="badge" v-if="isRunning">LIVE</span>
+            <span class="badge setup-badge" v-else>SETUP</span>
+          </div>
+          
+          <div class="upload-content" v-if="!isRunning">
+            <div class="source-tabs">
+              <button class="tab-btn" :class="{ active: sourceMode === 'camera' }" @click="sourceMode = 'camera'">
+                <span class="tab-icon camera-icon"></span> Camera
+              </button>
+              <button class="tab-btn" :class="{ active: sourceMode === 'video' }" @click="sourceMode = 'video'">
+                <span class="tab-icon video-icon"></span> Video File
+              </button>
+            </div>
+
+            <div v-if="sourceMode === 'video'" class="file-upload">
+              <input type="file" ref="fileInput" @change="handleFileSelect" accept=".mp4,.avi,.mov,.mkv" hidden />
+              <button class="upload-btn" @click="$refs.fileInput.click()">
+                <span class="upload-icon"></span> {{ uploadedFile ? uploadedFile.name : 'Select Video File' }}
+              </button>
+              <button v-if="uploadedFile" class="action-btn upload-action" @click="uploadVideo" :disabled="isUploading">
+                {{ isUploading ? 'Uploading...' : 'Upload' }}
+              </button>
+            </div>
+            <div v-if="uploadMessage" class="upload-message" :class="uploadMessageType">{{ uploadMessage }}</div>
+
+             <div class="roi-section mt-4">
+              <button class="roi-select-btn" @click="openRoiSelector">
+                <span class="roi-icon"></span> {{ hasRoi ? 'Change ROI' : 'Select ROI' }}
+              </button>
+              <div v-if="hasRoi" class="roi-status mt-2">
+                ROI: ({{ currentRoi.x1 }}, {{ currentRoi.y1 }}) to ({{ currentRoi.x2 }}, {{ currentRoi.y2 }})
+              </div>
+              <div v-else class="roi-status roi-warning mt-2">
+                No ROI set - full frame will be processed
+              </div>
+            </div>
+          </div>
+
+          <div class="video-container">
+            <div v-if="!isRunning" class="setup-preview">
+               <img v-if="roiFrameData" :src="`data:image/jpeg;base64,${roiFrameData}`" alt="Setup Preview" class="live-feed-img" />
+               <div v-else class="video-placeholder">
+                  <div class="placeholder-icon"></div>
+                  <span>Preview Area</span>
+               </div>
+            </div>
+            <img v-else :src="videoUrl" alt="Live Feed" class="live-feed-img" />
+          </div>
+        </div>
+
+        <div class="card trend-card" v-show="isRunning">
+          <div class="card-header">
+            <span class="card-title">LEVEL TREND</span>
+            <span class="card-subtitle">Last {{ trendData.length }} readings</span>
+          </div>
+          <div class="trend-container">
+            <canvas ref="trendCanvas"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="center-column">
+
+        <div class="card cylinder-card">
+          <div class="card-header"><span class="card-title">LIQUID LEVEL</span></div>
+          <div class="cylinder-container">
+            <div class="cylinder-wrapper">
+              <canvas ref="cylinderCanvas"></canvas>
+            </div>
+            <div class="level-display">
+              <span class="level-value">{{ levelDisplay }}</span>
+              <span class="level-unit">cm</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card alert-card" :class="alertClass">
+          <div class="alert-icon-wrapper"><div class="alert-icon"></div></div>
+          <div class="alert-content">
+            <span class="alert-title">{{ alertTitle }}</span>
+            <span class="alert-message">{{ alertMessage }}</span>
+          </div>
+           <div v-if="isCriticalAlert" class="critical-overlay">
+            <span class="critical-text">⚠ CRITICAL ⚠</span>
+          </div>
+        </div>
+        <div v-if="isCriticalAlert" class="fullscreen-alert-flash"></div>
+
+      </div>
+
+      <div class="right-column">
+
+        <div class="card controls-card">
+          <div class="card-header">
+            <span class="card-title">{{ isRunning ? 'RUNTIME CONTROLS' : 'CONFIGURATION' }}</span>
+          </div>
+          
+          <div class="controls-content">
+            
+            <div v-if="!isRunning">
+              <div class="input-group">
+                <label>Calibration (px/cm)</label>
+                <input type="number" v-model="calibration" step="0.1" min="0.1" />
+              </div>
+
+              <div class="input-group">
+                <label>Target FPS</label>
+                <input type="number" v-model="targetFps" step="1" min="1" max="120" />
+              </div>
+
+              <div class="input-group">
+                <label>Alert Threshold (cm)</label>
+                <div class="threshold-inputs">
+                  <input type="number" v-model="thresholdHigh" placeholder="High" step="0.5" />
+                  <input type="number" v-model="thresholdLow" placeholder="Low" step="0.5" />
+                </div>
+              </div>
+
+              <div class="input-group">
+                <label>Auto Light Adjust</label>
+                <div class="lighting-controls">
+                  <label class="toggle-switch">
+                    <input type="checkbox" v-model="autoLightingEnabled" @change="onAutoLightingChange" />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <div class="clip-limit-input" v-if="autoLightingEnabled">
+                    <label>Clip Limit</label>
+                    <input type="number" v-model="claheClipLimit" step="0.5" min="0.5" max="10" @change="onAutoLightingChange" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="control-buttons mt-4">
+                 <button class="ctrl-btn start-btn full-width" @click="startSystem" :disabled="isCheckingCamera">
+                  <span class="btn-icon start-icon"></span> {{ isCheckingCamera ? 'CHECKING...' : 'START SYSTEM' }}
+                </button>
+              </div>
+              
+              <div v-if="cameraError" class="camera-error mt-4">
+                <span class="error-icon"></span> {{ cameraError }}
+              </div>
+            </div>
+
+            <div v-else>
+              <div class="control-buttons vertical">
+                <button class="ctrl-btn stop-btn full-width" @click="stopSystem">
+                  <span class="btn-icon stop-icon"></span> STOP SYSTEM
+                </button>
+                <button class="ctrl-btn zero-btn full-width" @click="setZero">
+                  <span class="btn-icon zero-icon"></span> SET ZERO REF
+                </button>
+                <button class="ctrl-btn download-btn full-width" @click="downloadReport">
+                  <span class="btn-icon download-icon"></span> DOWNLOAD REPORT
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="card session-card" v-if="sessionSaved">
+            <div class="session-icon"></div>
+            <div class="session-content">
+              <span class="session-title">Session Saved</span>
+            </div>
+          </div>
+
+      </div>
+
+    </main>
+
+    <div v-if="showRoiModal" class="roi-modal-overlay" @click.self="cancelRoiSelection">
+      <div class="roi-modal">
+        <div class="roi-modal-header">
+          <span class="roi-modal-title">SELECT REGION OF INTEREST</span>
+          <button class="roi-close-btn" @click="cancelRoiSelection">&times;</button>
+        </div>
+        <div class="roi-modal-body">
+          <p class="roi-instructions">
+            Click two points on the image to define the ROI rectangle.
+            <br>Point 1: {{ roiPoints.length > 0 ? `(${roiPoints[0].x}, ${roiPoints[0].y})` : 'Not set' }}
+            <br>Point 2: {{ roiPoints.length > 1 ? `(${roiPoints[1].x}, ${roiPoints[1].y})` : 'Not set' }}
+          </p>
+          <div class="roi-canvas-container" v-if="roiFrameLoaded">
+            <canvas
+              ref="roiCanvas"
+              @click="handleRoiClick"
+              class="roi-canvas"
+            ></canvas>
+          </div>
+          <div v-else class="roi-loading">
+            {{ roiError || 'Loading frame...' }}
+          </div>
+        </div>
+        <div class="roi-modal-footer">
+          <button class="roi-btn roi-btn-secondary" @click="resetRoiPoints">Reset Points</button>
+          <button class="roi-btn roi-btn-secondary" @click="clearRoi">Clear ROI</button>
+          <button
+            class="roi-btn roi-btn-primary"
+            @click="confirmRoi"
+            :disabled="roiPoints.length < 2"
+          >
+            Confirm ROI
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, onUnmounted, watch } from "vue"
+import axios from "axios"
+
+// ============================================
+// CONFIGURATION
+// ============================================
+const backendUrl = "http://127.0.0.1:8000"
+const videoUrl = computed(() => isRunning.value ? `${backendUrl}/video_feed` : "")
+
+// ============================================
+// STATE
+// ============================================
+const status = ref("IDLE")
+const isRunning = ref(false)
+const sourceMode = ref("camera")
+const calibration = ref(1.0)
+const targetFps = ref(60)
+const level = ref(null)
+const fps = ref(0)
+const frameCount = ref(0)
+const processingTime = ref(0)
+
+const thresholdHigh = ref(8)
+const thresholdLow = ref(-8)
+
+const uploadedFile = ref(null)
+const uploadedFilePath = ref(null)
+const isUploading = ref(false)
+const uploadMessage = ref("")
+const uploadMessageType = ref("")
+
+const sessionSaved = ref(false)
+const trendData = ref([])
+
+// Camera state
+const cameraError = ref("")
+const isCheckingCamera = ref(false)
+
+// Auto Lighting state
+const autoLightingEnabled = ref(true)
+const claheClipLimit = ref(2.0)
+
+// ROI (Region of Interest) state
+const showRoiModal = ref(false)
+const roiFrameLoaded = ref(false)
+const roiFrameData = ref(null)
+const roiFrameWidth = ref(0)
+const roiFrameHeight = ref(0)
+const roiPoints = ref([])
+const roiError = ref("")
+const hasRoi = ref(false)
+const currentRoi = ref({ x1: 0, y1: 0, x2: 0, y2: 0 })
+const roiCanvas = ref(null)
+let roiCtx = null
+
+let pollingInterval = null
+
+// ============================================
+// COMPUTED
+// ============================================
+const statusClass = computed(() => {
+  if (isRunning.value) return "running"
+  if (status.value === "STOPPED") return "stopped"
+  return "idle"
+})
+
+const levelDisplay = computed(() => {
+  if (level.value === null) return "--"
+  return level.value.toFixed(2)
+})
+
+const alertClass = computed(() => {
+  if (level.value === null) return "normal"
+  if (level.value >= thresholdHigh.value) return "danger"
+  if (level.value <= thresholdLow.value) return "warning"
+  return "normal"
+})
+
+const alertTitle = computed(() => {
+  if (level.value === null) return "System Ready"
+  if (level.value >= thresholdHigh.value) return "HIGH LEVEL ALERT"
+  if (level.value <= thresholdLow.value) return "LOW LEVEL ALERT"
+  return "Normal Operation"
+})
+
+const alertMessage = computed(() => {
+  if (level.value === null) return "Waiting for measurements..."
+  if (level.value >= thresholdHigh.value) return `Level exceeds ${thresholdHigh.value} cm threshold`
+  if (level.value <= thresholdLow.value) return `Level below ${thresholdLow.value} cm threshold`
+  return "All parameters within normal range"
+})
+
+// Critical alert - triggers movie-style warning
+const isCriticalAlert = computed(() => {
+  if (level.value === null) return false
+  // Critical when level exceeds thresholds
+  return level.value >= thresholdHigh.value || level.value <= thresholdLow.value
+})
+
+// ============================================
+// CYLINDER ANIMATION
+// ============================================
+const cylinderCanvas = ref(null)
+let cylinderCtx = null
+let cylinderAnimId = null
+
+let targetLevel = 0
+let currentLevel = 0
+let smoothedTarget = 0
+let velocity = 0
+
+// Physics parameters - RESPONSIVE like original Tkinter app
+const tension = 0.04        // Same as original
+const damping = 0.15        // Same as original
+// Dynamic Scale State
+let minLevel = -10
+let maxLevel = 10
+const windowSize = 20 // Range of visible area (e.g., span of 20cm)
+
+// Smoothing parameters - LESS aggressive
+const smoothingFactor = 0.4     // Higher = more responsive (was 0.15)
+const changeThreshold = 0.05    // Lower = respond to smaller changes (was 0.3)
+let levelHistory = []
+const historySize = 3           // Smaller history = faster response (was 5)
+
+// Smooth incoming level values to avoid jerky movements
+const smoothLevel = (newLevel) => {
+  if (newLevel === null || newLevel === undefined) return smoothedTarget
+
+  // Add to history
+  levelHistory.push(newLevel)
+  if (levelHistory.length > historySize) {
+    levelHistory.shift()
+  }
+
+  // Calculate moving average
+  const avgLevel = levelHistory.reduce((a, b) => a + b, 0) / levelHistory.length
+
+  // Always update smoothedTarget (removed threshold that was blocking updates)
+  smoothedTarget += (avgLevel - smoothedTarget) * smoothingFactor
+
+  return smoothedTarget
+}
+
+const updateCylinderPhysics = () => {
+  // Use smoothedTarget instead of raw targetLevel for smoother animation
+  const displacement = smoothedTarget - currentLevel
+  const acceleration = displacement * tension - velocity * damping
+  velocity += acceleration
+  currentLevel += velocity
+
+  // --- Dynamic Scale Update ---
+  // Center the view around the current smoothed target
+  // But strictly based on smoothedTarget to avoid jitter from physics bouncing
+  const center = smoothedTarget
+  minLevel = center - windowSize / 2
+  maxLevel = center + windowSize / 2
+}
+
+const drawCylinder = () => {
+  const canvas = cylinderCanvas.value
+  if (!canvas) return
+
+  const w = canvas.width
+  const h = canvas.height
+  const ctx = cylinderCtx
+
+  ctx.clearRect(0, 0, w, h)
+
+  const cylX = 40
+  const cylY = 20
+  const cylW = w - 80
+  const cylH = h - 40
+
+  // Cylinder background
+  const bgGrad = ctx.createLinearGradient(cylX, 0, cylX + cylW, 0)
+  bgGrad.addColorStop(0, "rgba(10, 25, 47, 0.8)")
+  bgGrad.addColorStop(0.5, "rgba(20, 40, 70, 0.8)")
+  bgGrad.addColorStop(1, "rgba(10, 25, 47, 0.8)")
+
+  ctx.fillStyle = bgGrad
+  ctx.beginPath()
+  ctx.roundRect(cylX, cylY, cylW, cylH, 10)
+  ctx.fill()
+
+  // Cylinder border glow
+  ctx.strokeStyle = "rgba(0, 212, 255, 0.5)"
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.roundRect(cylX, cylY, cylW, cylH, 10)
+  ctx.stroke()
+
+  // Liquid
+  let normalized = (currentLevel - minLevel) / (maxLevel - minLevel)
+  normalized = Math.max(0, Math.min(1, normalized))
+
+  const liquidH = normalized * cylH
+  const liquidY = cylY + cylH - liquidH
+
+  const liqGrad = ctx.createLinearGradient(0, liquidY, 0, cylY + cylH)
+  liqGrad.addColorStop(0, "rgba(0, 212, 255, 0.9)")
+  liqGrad.addColorStop(0.5, "rgba(0, 150, 255, 0.7)")
+  liqGrad.addColorStop(1, "rgba(0, 100, 200, 0.5)")
+
+  ctx.fillStyle = liqGrad
+  ctx.beginPath()
+  ctx.roundRect(cylX + 4, liquidY, cylW - 8, liquidH - 4, [0, 0, 8, 8])
+  ctx.fill()
+
+  // Surface wave effect
+  if (liquidH > 10) {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.3)"
+    ctx.beginPath()
+    ctx.ellipse(cylX + cylW / 2, liquidY + 5, cylW / 2 - 10, 5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fill()
+  }
+
+  // Dynamic Scale ticks
+  // Draw major ticks every 1 unit, label every 5 units
+  ctx.strokeStyle = "rgba(0, 212, 255, 0.3)"
+  ctx.fillStyle = "rgba(0, 212, 255, 0.8)"
+  ctx.font = "10px monospace"
+  ctx.textAlign = "right"
+  ctx.lineWidth = 1
+
+  // Determine integer range to draw
+  const startTick = Math.ceil(minLevel)
+  const endTick = Math.floor(maxLevel)
+
+  for (let i = startTick; i <= endTick; i++) {
+    // Map value 'i' to Y position
+    const normalized = (i - minLevel) / (maxLevel - minLevel)
+    const y = cylY + cylH - (normalized * cylH) // Invert Y because canvas 0 is top
+
+    // Skip if out of drawing bounds (just safety)
+    if (y < cylY || y > cylY + cylH) continue
+
+    // Major tick
+    ctx.beginPath()
+    ctx.moveTo(cylX, y)
+    ctx.lineTo(cylX + 10, y)
+    ctx.stroke()
+
+    // Right side tick
+    ctx.beginPath()
+    ctx.moveTo(cylX + cylW - 10, y)
+    ctx.lineTo(cylX + cylW, y)
+    ctx.stroke()
+
+    // Label every 5 units or if range is small enough
+    if (i % 5 === 0 || windowSize <= 10) {
+       ctx.fillText(i.toString(), cylX - 5, y + 3)
+    }
+  }
+}
+
+const animateCylinder = () => {
+  updateCylinderPhysics()
+  drawCylinder()
+  cylinderAnimId = requestAnimationFrame(animateCylinder)
+}
+
+// ============================================
+// TREND GRAPH
+// ============================================
+const trendCanvas = ref(null)
+let trendCtx = null
+const maxTrendPoints = 30
+
+const drawTrend = () => {
+  const canvas = trendCanvas.value
+  if (!canvas || !trendCtx) return
+
+  const w = canvas.width
+  const h = canvas.height
+  const ctx = trendCtx
+  const padding = 30
+
+  ctx.clearRect(0, 0, w, h)
+
+  // Grid
+  ctx.strokeStyle = "rgba(0, 212, 255, 0.1)"
+  ctx.lineWidth = 1
+
+  for (let i = 0; i <= 5; i++) {
+    const y = padding + (i / 5) * (h - 2 * padding)
+    ctx.beginPath()
+    ctx.moveTo(padding, y)
+    ctx.lineTo(w - padding, y)
+    ctx.stroke()
+  }
+
+  if (trendData.value.length < 2) return
+
+  // Draw line
+  const graphW = w - 2 * padding
+  const graphH = h - 2 * padding
+  const step = graphW / (maxTrendPoints - 1)
+
+  ctx.beginPath()
+  ctx.strokeStyle = "rgba(0, 212, 255, 0.8)"
+  ctx.lineWidth = 2
+
+  trendData.value.forEach((val, i) => {
+    const x = padding + i * step
+    // Use dynamic minLevel/maxLevel
+    const normalized = (val - minLevel) / (maxLevel - minLevel)
+    // Clamp to canvas area
+    const safeNorm = Math.max(0, Math.min(1, normalized))
+    const y = padding + (1 - safeNorm) * graphH
+
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+
+  // Fill area
+  const lastX = padding + (trendData.value.length - 1) * step
+  ctx.lineTo(lastX, h - padding)
+  ctx.lineTo(padding, h - padding)
+  ctx.closePath()
+
+  const fillGrad = ctx.createLinearGradient(0, padding, 0, h - padding)
+  fillGrad.addColorStop(0, "rgba(0, 212, 255, 0.3)")
+  fillGrad.addColorStop(1, "rgba(0, 212, 255, 0.05)")
+  ctx.fillStyle = fillGrad
+  ctx.fill()
+
+  // Draw points
+  ctx.fillStyle = "#00d4ff"
+  trendData.value.forEach((val, i) => {
+    const x = padding + i * step
+    const normalized = (val - minLevel) / (maxLevel - minLevel)
+    const safeNorm = Math.max(0, Math.min(1, normalized))
+    const y = padding + (1 - safeNorm) * graphH
+
+    ctx.beginPath()
+    ctx.arc(x, y, 3, 0, Math.PI * 2)
+    ctx.fill()
+  })
+}
+
+watch(trendData, drawTrend, { deep: true })
+
+// ============================================
+// API FUNCTIONS
+// ============================================
+const handleFileSelect = (event) => {
+  const file = event.target.files[0]
+  if (file) {
+    uploadedFile.value = file
+    uploadMessage.value = ""
+  }
+}
+
+const uploadVideo = async () => {
+  if (!uploadedFile.value) return
+
+  isUploading.value = true
+  uploadMessage.value = ""
+
+  const formData = new FormData()
+  formData.append("file", uploadedFile.value)
+
+  try {
+    const res = await axios.post(`${backendUrl}/upload_video`, formData)
+    uploadedFilePath.value = res.data.path
+    uploadMessage.value = "Video uploaded successfully!"
+    uploadMessageType.value = "success"
+  } catch (e) {
+    uploadMessage.value = "Upload failed: " + (e.response?.data?.detail || e.message)
+    uploadMessageType.value = "error"
+  } finally {
+    isUploading.value = false
+  }
+}
+
+// Check if camera is available
+const checkCamera = async () => {
+  try {
+    isCheckingCamera.value = true
+    cameraError.value = ""
+
+    const res = await axios.get(`${backendUrl}/check_camera`, {
+      params: { index: 0 }
+    })
+
+    if (!res.data.available) {
+      cameraError.value = res.data.message || "Camera not found"
+      return false
+    }
+
+    return true
+  } catch (e) {
+    cameraError.value = "Failed to check camera: " + (e.response?.data?.detail || e.message)
+    return false
+  } finally {
+    isCheckingCamera.value = false
+  }
+}
+
+const startSystem = async () => {
+  try {
+    cameraError.value = ""
+
+    // If camera mode, check camera availability first
+    if (sourceMode.value === "camera") {
+      status.value = "CHECKING CAMERA..."
+      const cameraAvailable = await checkCamera()
+
+      if (!cameraAvailable) {
+        status.value = "CAMERA ERROR"
+        return
+      }
+    } else {
+      // Video file mode - check if file is uploaded
+      if (!uploadedFilePath.value) {
+        cameraError.value = "Please upload a video file first"
+        status.value = "IDLE"
+        return
+      }
+    }
+
+    status.value = "STARTING..."
+    sessionSaved.value = false
+    trendData.value = []
+
+    // Reset smoothing state for new session
+    levelHistory = []
+    smoothedTarget = 0
+    currentLevel = 0
+    velocity = 0
+    
+    // Reset Dynamic Scale
+    minLevel = -10
+    maxLevel = 10
+
+    const source = sourceMode.value === "camera" ? "0" : uploadedFilePath.value
+
+    const res = await axios.post(`${backendUrl}/start`, null, {
+      params: {
+        source,
+        calibration: calibration.value,
+        fps: targetFps.value
+      }
+    })
+
+    // Check if backend returned an error
+    if (res.data.success === false) {
+      cameraError.value = res.data.message || "Failed to start"
+      status.value = "ERROR"
+      return
+    }
+
+    isRunning.value = true
+    status.value = "RUNNING"
+    startPolling()
+  } catch (e) {
+    status.value = "ERROR"
+    cameraError.value = "Connection error: " + (e.response?.data?.message || e.message)
+    console.error(e)
+  }
+}
+
+const stopSystem = async () => {
+  try {
+    await axios.post(`${backendUrl}/stop`)
+    isRunning.value = false
+    status.value = "STOPPED"
+    stopPolling()
+    sessionSaved.value = true
+
+    // Reset Dynamic Scale on Stop too (optional, but good for UI)
+    minLevel = -10
+    maxLevel = 10
+    currentLevel = 0
+    smoothedTarget = 0
+    level.value = null
+
+    setTimeout(() => {
+      sessionSaved.value = false
+    }, 5000)
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const setZero = async () => {
+  try {
+    await axios.post(`${backendUrl}/set_zero`)
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const downloadReport = async () => {
+  try {
+    window.open(`${backendUrl}/download_report`, "_blank")
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const onFpsChange = async () => {
+  if (!isRunning.value) return
+  try {
+    await axios.post(`${backendUrl}/set_fps`, null, {
+      params: { value: targetFps.value }
+    })
+  } catch (e) {
+    console.error('Failed to update FPS:', e)
+  }
+}
+
+const onCalibrationChange = async () => {
+  if (!isRunning.value) return
+  try {
+    await axios.post(`${backendUrl}/set_calibration`, null, {
+      params: { value: calibration.value }
+    })
+  } catch (e) {
+    console.error('Failed to update calibration:', e)
+  }
+}
+
+const onAutoLightingChange = async () => {
+  try {
+    await axios.post(`${backendUrl}/set_auto_lighting`, null, {
+      params: {
+        enabled: autoLightingEnabled.value,
+        clip_limit: claheClipLimit.value
+      }
+    })
+  } catch (e) {
+    console.error('Failed to update auto lighting:', e)
+  }
+}
+
+const loadAutoLightingSettings = async () => {
+  try {
+    const res = await axios.get(`${backendUrl}/auto_lighting`)
+    autoLightingEnabled.value = res.data.enabled
+    claheClipLimit.value = res.data.clip_limit
+  } catch (e) {
+    console.error('Failed to load auto lighting settings:', e)
+  }
+}
+
+// ============================================
+// ROI FUNCTIONS
+// ============================================
+
+const openRoiSelector = async () => {
+  roiError.value = ""
+  roiFrameLoaded.value = false
+  roiPoints.value = []
+  showRoiModal.value = true
+
+  try {
+    const source = sourceMode.value === "camera" ? "0" : (uploadedFilePath.value || "0")
+    const res = await axios.get(`${backendUrl}/capture_frame`, {
+      params: { source }
+    })
+
+    if (!res.data.success) {
+      roiError.value = res.data.message || "Failed to capture frame"
+      return
+    }
+
+    roiFrameData.value = res.data.image
+    roiFrameWidth.value = res.data.width
+    roiFrameHeight.value = res.data.height
+    roiFrameLoaded.value = true
+
+    // Draw the frame on canvas after next tick
+    setTimeout(() => {
+      drawRoiFrame()
+    }, 50)
+
+  } catch (e) {
+    roiError.value = "Failed to capture frame: " + (e.response?.data?.message || e.message)
+  }
+}
+
+const drawRoiFrame = () => {
+  const canvas = roiCanvas.value
+  if (!canvas || !roiFrameData.value) return
+
+  // Set canvas size to match frame (scaled down for compact modal)
+  const maxWidth = 500
+  const maxHeight = 320
+  let displayWidth = roiFrameWidth.value
+  let displayHeight = roiFrameHeight.value
+
+  // Scale down if too large
+  if (displayWidth > maxWidth) {
+    const scale = maxWidth / displayWidth
+    displayWidth = maxWidth
+    displayHeight = Math.round(displayHeight * scale)
+  }
+  if (displayHeight > maxHeight) {
+    const scale = maxHeight / displayHeight
+    displayHeight = maxHeight
+    displayWidth = Math.round(displayWidth * scale)
+  }
+
+  canvas.width = displayWidth
+  canvas.height = displayHeight
+  roiCtx = canvas.getContext("2d")
+
+  // Load and draw image
+  const img = new Image()
+  img.onload = () => {
+    roiCtx.drawImage(img, 0, 0, displayWidth, displayHeight)
+    drawRoiPoints()
+  }
+  img.src = `data:image/jpeg;base64,${roiFrameData.value}`
+}
+
+const drawRoiPoints = () => {
+  if (!roiCtx || !roiFrameData.value) return
+
+  // Redraw frame first
+  const canvas = roiCanvas.value
+  const img = new Image()
+  img.onload = () => {
+    roiCtx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+    // Draw points
+    roiCtx.fillStyle = "#00ff00"
+    roiCtx.strokeStyle = "#00ff00"
+    roiCtx.lineWidth = 2
+
+    roiPoints.value.forEach((pt, idx) => {
+      // Scale point to display coordinates
+      const x = (pt.x / roiFrameWidth.value) * canvas.width
+      const y = (pt.y / roiFrameHeight.value) * canvas.height
+
+      roiCtx.beginPath()
+      roiCtx.arc(x, y, 6, 0, Math.PI * 2)
+      roiCtx.fill()
+
+      roiCtx.fillStyle = "#ffffff"
+      roiCtx.font = "12px Arial"
+      roiCtx.fillText(`P${idx + 1}`, x + 10, y - 5)
+      roiCtx.fillStyle = "#00ff00"
+    })
+
+    // Draw rectangle if 2 points
+    if (roiPoints.value.length === 2) {
+      const p1 = roiPoints.value[0]
+      const p2 = roiPoints.value[1]
+
+      const x1 = (Math.min(p1.x, p2.x) / roiFrameWidth.value) * canvas.width
+      const y1 = (Math.min(p1.y, p2.y) / roiFrameHeight.value) * canvas.height
+      const x2 = (Math.max(p1.x, p2.x) / roiFrameWidth.value) * canvas.width
+      const y2 = (Math.max(p1.y, p2.y) / roiFrameHeight.value) * canvas.height
+
+      roiCtx.strokeStyle = "#00ff00"
+      roiCtx.lineWidth = 2
+      roiCtx.setLineDash([5, 5])
+      roiCtx.strokeRect(x1, y1, x2 - x1, y2 - y1)
+      roiCtx.setLineDash([])
+
+      // Fill with semi-transparent overlay
+      roiCtx.fillStyle = "rgba(0, 255, 0, 0.1)"
+      roiCtx.fillRect(x1, y1, x2 - x1, y2 - y1)
+    }
+  }
+  img.src = `data:image/jpeg;base64,${roiFrameData.value}`
+}
+
+const handleRoiClick = (event) => {
+  if (roiPoints.value.length >= 2) return
+
+  const canvas = roiCanvas.value
+  const rect = canvas.getBoundingClientRect()
+
+  // Get click position relative to canvas
+  const clickX = event.clientX - rect.left
+  const clickY = event.clientY - rect.top
+
+  // Scale to original frame coordinates
+  const x = Math.round((clickX / canvas.width) * roiFrameWidth.value)
+  const y = Math.round((clickY / canvas.height) * roiFrameHeight.value)
+
+  roiPoints.value.push({ x, y })
+  drawRoiPoints()
+}
+
+const resetRoiPoints = () => {
+  roiPoints.value = []
+  drawRoiFrame()
+}
+
+const cancelRoiSelection = () => {
+  showRoiModal.value = false
+  roiPoints.value = []
+  roiFrameLoaded.value = false
+}
+
+const confirmRoi = async () => {
+  if (roiPoints.value.length < 2) return
+
+  const p1 = roiPoints.value[0]
+  const p2 = roiPoints.value[1]
+
+  const x1 = Math.min(p1.x, p2.x)
+  const y1 = Math.min(p1.y, p2.y)
+  const x2 = Math.max(p1.x, p2.x)
+  const y2 = Math.max(p1.y, p2.y)
+
+  try {
+    await axios.post(`${backendUrl}/set_roi`, null, {
+      params: { x1, y1, x2, y2 }
+    })
+
+    currentRoi.value = { x1, y1, x2, y2 }
+    hasRoi.value = true
+    showRoiModal.value = false
+
+  } catch (e) {
+    roiError.value = "Failed to set ROI: " + (e.response?.data?.message || e.message)
+  }
+}
+
+const clearRoi = async () => {
+  try {
+    await axios.post(`${backendUrl}/clear_roi`)
+    hasRoi.value = false
+    currentRoi.value = { x1: 0, y1: 0, x2: 0, y2: 0 }
+    roiPoints.value = []
+    if (roiFrameLoaded.value) {
+      drawRoiFrame()
+    }
+  } catch (e) {
+    console.error("Failed to clear ROI:", e)
+  }
+}
+
+// Load current ROI on mount
+const loadCurrentRoi = async () => {
+  try {
+    const res = await axios.get(`${backendUrl}/roi`)
+    if (res.data.has_roi && res.data.roi) {
+      hasRoi.value = true
+      currentRoi.value = {
+        x1: res.data.roi[0],
+        y1: res.data.roi[1],
+        x2: res.data.roi[2],
+        y2: res.data.roi[3]
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load ROI:", e)
+  }
+}
+
+// ============================================
+// POLLING
+// ============================================
+const startPolling = () => {
+  pollingInterval = setInterval(async () => {
+    try {
+      const res = await axios.get(`${backendUrl}/level`)
+
+      if (res.data.level !== null && res.data.level !== undefined) {
+        level.value = res.data.level
+
+        // Apply smoothing before updating cylinder target
+        targetLevel = res.data.level
+        smoothLevel(res.data.level)
+
+        trendData.value.push(res.data.level)
+        if (trendData.value.length > maxTrendPoints) {
+          trendData.value.shift()
+        }
+      }
+
+      fps.value = res.data.fps || 0
+      frameCount.value = res.data.frame_count || 0
+      processingTime.value = (res.data.processing_time || 0) * 1000
+
+      // --- Heartbeat Check ---
+      // If backend says it's not running (e.g. video ended), stop the frontend state
+      if (res.data.running === false && isRunning.value) {
+        stopSystem()
+        status.value = "SOURCE ENDED"
+        alert("Video source has ended or disconnected.")
+      }
+
+    } catch (e) {
+      console.error(e)
+    }
+  }, 100) // Poll every 100ms for smooth UI
+}
+
+const stopPolling = () => {
+  if (pollingInterval) {
+    clearInterval(pollingInterval)
+    pollingInterval = null
+  }
+}
+
+// ============================================
+// LIFECYCLE
+// ============================================
+onMounted(() => {
+  // Init cylinder canvas
+  const cylCanvas = cylinderCanvas.value
+  cylCanvas.width = 200
+  cylCanvas.height = 300
+  cylinderCtx = cylCanvas.getContext("2d")
+  animateCylinder()
+
+  // Init trend canvas
+  const tCanvas = trendCanvas.value
+  tCanvas.width = tCanvas.parentElement.clientWidth || 400
+  tCanvas.height = 150
+  trendCtx = tCanvas.getContext("2d")
+  drawTrend()
+
+  // Load current ROI from backend
+  loadCurrentRoi()
+
+  // Load auto lighting settings from backend
+  loadAutoLightingSettings()
+})
+
+onUnmounted(() => {
+  stopPolling()
+  if (cylinderAnimId) cancelAnimationFrame(cylinderAnimId)
+})
+</script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Rajdhani:wght@400;500;600;700&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Rajdhani', sans-serif;
+  background: linear-gradient(135deg, #0a1628 0%, #1a2a4a 50%, #0d1f3c 100%);
+  min-height: 100vh;
+  color: #e0e6ed;
+  overflow-x: hidden;
+}
+
+.dashboard {
+  min-height: 100vh;
+  padding: 20px;
+}
+
+/* ========== HEADER ========== */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 25px;
+  background: rgba(15, 30, 60, 0.6);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 15px;
+  margin-bottom: 20px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #00d4ff;
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+}
+
+.logo-icon {
+  width: 35px;
+  height: 35px;
+  background: linear-gradient(135deg, #00d4ff, #0080ff);
+  border-radius: 8px;
+  box-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #666;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.status-dot.running {
+  background: #00ff88;
+  box-shadow: 0 0 10px #00ff88;
+}
+
+.status-dot.stopped {
+  background: #ff4466;
+  box-shadow: 0 0 10px #ff4466;
+}
+
+.status-dot.idle {
+  background: #ffaa00;
+  box-shadow: 0 0 10px #ffaa00;
+}
+
+/* ========== MAIN GRID ========== */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 20px;
+}
+
+/* ========== CARDS ========== */
+.card {
+  background: rgba(15, 30, 60, 0.5);
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.card-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #00d4ff;
+  letter-spacing: 2px;
+}
+
+.card-subtitle {
+  font-size: 11px;
+  color: #667;
+}
+
+.badge {
+  padding: 3px 10px;
+  background: rgba(0, 255, 136, 0.2);
+  border: 1px solid #00ff88;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #00ff88;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ========== VIDEO PANEL ========== */
+.video-container {
+  width: 100%;
+  height: 220px;
+  background: rgba(0, 10, 30, 0.8);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(0, 212, 255, 0.1);
+}
+
+.setup-preview {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.video-container img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: #445;
+}
+
+.placeholder-icon {
+  width: 50px;
+  height: 50px;
+  border: 2px dashed #334;
+  border-radius: 10px;
+}
+
+/* ========== UPLOAD PANEL ========== */
+.source-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px;
+  background: rgba(0, 20, 50, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 8px;
+  color: #88a;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.tab-btn.active {
+  background: rgba(0, 212, 255, 0.15);
+  border-color: #00d4ff;
+  color: #00d4ff;
+}
+
+.tab-btn:hover {
+  border-color: #00d4ff;
+}
+
+.tab-icon {
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask-size: contain;
+}
+
+.file-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.upload-btn {
+  padding: 12px;
+  background: rgba(0, 20, 50, 0.5);
+  border: 1px dashed rgba(0, 212, 255, 0.3);
+  border-radius: 8px;
+  color: #88a;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.3s;
+  text-align: center;
+}
+
+.upload-btn:hover {
+  border-color: #00d4ff;
+  color: #00d4ff;
+}
+
+.action-btn {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #00d4ff, #0080ff);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.action-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(0, 212, 255, 0.4);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.upload-message {
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.upload-message.success {
+  background: rgba(0, 255, 136, 0.1);
+  border: 1px solid rgba(0, 255, 136, 0.3);
+  color: #00ff88;
+}
+
+.upload-message.error {
+  background: rgba(255, 68, 102, 0.1);
+  border: 1px solid rgba(255, 68, 102, 0.3);
+  color: #ff4466;
+}
+
+/* ========== TREND GRAPH ========== */
+.trend-container {
+  width: 100%;
+  height: 150px;
+}
+
+.trend-container canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* ========== CYLINDER ========== */
+.cylinder-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cylinder-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.cylinder-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.level-markers {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 300px;
+  font-size: 11px;
+  color: #556;
+}
+
+.level-display {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.level-value {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 48px;
+  font-weight: 700;
+  color: #00d4ff;
+  text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+}
+
+.level-unit {
+  font-size: 18px;
+  color: #667;
+}
+
+/* ========== ALERT PANEL ========== */
+.alert-card {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 15px 20px;
+  transition: all 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+
+.alert-card.normal {
+  border-color: rgba(0, 255, 136, 0.3);
+}
+
+.alert-card.warning {
+  border-color: rgba(255, 170, 0, 0.5);
+  background: rgba(255, 170, 0, 0.1);
+}
+
+.alert-card.danger {
+  border-color: rgba(255, 68, 102, 0.8);
+  background: rgba(255, 68, 102, 0.2);
+  animation: dangerPulse 0.5s infinite, dangerShake 0.3s infinite;
+  box-shadow:
+    0 0 20px rgba(255, 68, 102, 0.5),
+    0 0 40px rgba(255, 68, 102, 0.3),
+    inset 0 0 20px rgba(255, 68, 102, 0.1);
+}
+
+@keyframes dangerPulse {
+  0%, 100% {
+    background: rgba(255, 68, 102, 0.2);
+    border-color: rgba(255, 68, 102, 0.8);
+  }
+  50% {
+    background: rgba(255, 68, 102, 0.4);
+    border-color: rgba(255, 68, 102, 1);
+  }
+}
+
+@keyframes dangerShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+.alert-icon-wrapper {
+  position: relative;
+}
+
+.alert-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(0, 255, 136, 0.2);
+  border: 2px solid #00ff88;
+}
+
+.alert-card.warning .alert-icon {
+  background: rgba(255, 170, 0, 0.2);
+  border-color: #ffaa00;
+  animation: warningPulseIcon 1s infinite;
+}
+
+.alert-card.danger .alert-icon {
+  background: rgba(255, 68, 102, 0.4);
+  border-color: #ff4466;
+  animation: dangerPulseIcon 0.3s infinite;
+  box-shadow: 0 0 15px rgba(255, 68, 102, 0.8);
+}
+
+@keyframes warningPulseIcon {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+@keyframes dangerPulseIcon {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 15px rgba(255, 68, 102, 0.8); }
+  50% { transform: scale(1.2); box-shadow: 0 0 25px rgba(255, 68, 102, 1); }
+}
+
+.alert-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+
+.alert-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #00ff88;
+}
+
+.alert-card.warning .alert-title { color: #ffaa00; }
+.alert-card.danger .alert-title {
+  color: #ff4466;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  animation: textFlash 0.5s infinite;
+}
+
+@keyframes textFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.alert-message {
+  font-size: 12px;
+  color: #778;
+}
+
+.alert-card.danger .alert-message {
+  color: #ffaaaa;
+}
+
+/* Critical Overlay inside card */
+.critical-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 4px 12px;
+  background: linear-gradient(90deg, transparent, rgba(255, 0, 0, 0.8), rgba(255, 0, 0, 0.8));
+  animation: criticalSlide 0.5s infinite alternate;
+}
+
+.critical-text {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 2px;
+  animation: criticalBlink 0.3s infinite;
+}
+
+@keyframes criticalSlide {
+  0% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+@keyframes criticalBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* FULLSCREEN ALERT FLASH - Movie Style Red Flash */
+.fullscreen-alert-flash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 999;
+  animation: fullscreenFlash 1s infinite;
+}
+
+@keyframes fullscreenFlash {
+  0%, 100% {
+    background: transparent;
+    box-shadow: inset 0 0 100px rgba(255, 0, 0, 0);
+  }
+  50% {
+    background: rgba(255, 0, 0, 0.05);
+    box-shadow: inset 0 0 100px rgba(255, 0, 0, 0.3);
+  }
+}
+
+/* ========== CONTROLS ========== */
+.controls-content {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #667;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.input-group input {
+  padding: 10px 12px;
+  background: rgba(0, 20, 50, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 8px;
+  color: #fff;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: #00d4ff;
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.2);
+}
+
+.input-group input:disabled {
+  opacity: 0.5;
+}
+
+.threshold-inputs {
+  display: flex;
+  gap: 10px;
+}
+
+.threshold-inputs input {
+  flex: 1;
+}
+
+/* ========== LIGHTING CONTROLS ========== */
+.lighting-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(100, 100, 120, 0.4);
+  border: 1px solid rgba(100, 100, 120, 0.6);
+  border-radius: 26px;
+  transition: all 0.3s;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: #667;
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: rgba(0, 212, 255, 0.3);
+  border-color: #00d4ff;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(24px);
+  background: #00d4ff;
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+}
+
+.clip-limit-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.clip-limit-input label {
+  font-size: 10px;
+  color: #667;
+  white-space: nowrap;
+}
+
+.clip-limit-input input {
+  width: 70px;
+  padding: 6px 8px;
+  background: rgba(0, 20, 50, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 6px;
+  color: #fff;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+}
+
+.clip-limit-input input:focus {
+  outline: none;
+  border-color: #00d4ff;
+}
+
+.control-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ctrl-btn {
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.control-buttons.vertical {
+  grid-template-columns: 1fr;
+}
+
+.full-width {
+  width: 100%;
+  justify-content: center;
+}
+
+.ctrl-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.start-btn {
+  background: linear-gradient(135deg, #00ff88, #00cc66);
+  color: #000;
+}
+
+.start-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(0, 255, 136, 0.4);
+}
+
+.stop-btn {
+  background: linear-gradient(135deg, #ff4466, #cc3355);
+  color: #fff;
+}
+
+.stop-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(255, 68, 102, 0.4);
+}
+
+.zero-btn {
+  background: linear-gradient(135deg, #ffaa00, #ff8800);
+  color: #000;
+}
+
+.zero-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(255, 170, 0, 0.4);
+}
+
+.download-btn {
+  background: linear-gradient(135deg, #00d4ff, #0080ff);
+  color: #fff;
+}
+
+.download-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(0, 212, 255, 0.4);
+}
+
+.btn-icon {
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+}
+
+/* ========== CAMERA ERROR ========== */
+.camera-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 15px;
+  background: rgba(255, 68, 102, 0.15);
+  border: 1px solid rgba(255, 68, 102, 0.4);
+  border-radius: 8px;
+  color: #ff6b7a;
+  font-size: 13px;
+  font-weight: 600;
+  animation: errorFadeIn 0.3s ease-out;
+}
+
+.camera-error .error-icon {
+  width: 20px;
+  height: 20px;
+  background: #ff4466;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.camera-error .error-icon::before,
+.camera-error .error-icon::after {
+  content: '';
+  position: absolute;
+  background: white;
+  top: 50%;
+  left: 50%;
+}
+
+.camera-error .error-icon::before {
+  width: 2px;
+  height: 8px;
+  transform: translate(-50%, -70%);
+}
+
+.camera-error .error-icon::after {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  transform: translate(-50%, 100%);
+}
+
+@keyframes errorFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========== SESSION CARD ========== */
+.session-card {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  background: rgba(0, 255, 136, 0.1);
+  border-color: rgba(0, 255, 136, 0.3);
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.session-icon {
+  width: 40px;
+  height: 40px;
+  background: rgba(0, 255, 136, 0.2);
+  border: 2px solid #00ff88;
+  border-radius: 50%;
+}
+
+.session-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.session-title {
+  font-weight: 700;
+  color: #00ff88;
+}
+
+.session-message {
+  font-size: 12px;
+  color: #778;
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 1200px) {
+  .main-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .right-column {
+    grid-column: span 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .right-column {
+    grid-column: span 1;
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ========== ROI SELECTION ========== */
+.roi-section {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(0, 212, 255, 0.1);
+}
+
+.roi-select-btn {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #9933ff, #6600cc);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.roi-select-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(153, 51, 255, 0.4);
+}
+
+.roi-select-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.roi-icon {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+}
+
+.roi-status {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 255, 136, 0.1);
+  border: 1px solid rgba(0, 255, 136, 0.3);
+  border-radius: 6px;
+  font-size: 11px;
+  color: #00ff88;
+  text-align: center;
+}
+
+.roi-status.roi-warning {
+  background: rgba(255, 170, 0, 0.1);
+  border-color: rgba(255, 170, 0, 0.3);
+  color: #ffaa00;
+}
+
+/* ROI Modal */
+.roi-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(5px);
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.roi-modal {
+  background: rgba(15, 30, 60, 0.98);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 12px;
+  max-width: 550px;
+  width: 100%;
+  margin: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.roi-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(0, 212, 255, 0.1);
+  border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.roi-modal-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #00d4ff;
+  letter-spacing: 1px;
+}
+
+.roi-close-btn {
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 68, 102, 0.2);
+  border: 1px solid rgba(255, 68, 102, 0.4);
+  border-radius: 50%;
+  color: #ff4466;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.roi-close-btn:hover {
+  background: rgba(255, 68, 102, 0.4);
+}
+
+.roi-modal-body {
+  padding: 15px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.roi-instructions {
+  margin-bottom: 12px;
+  padding: 10px;
+  background: rgba(0, 20, 50, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #aab;
+  line-height: 1.6;
+}
+
+.roi-canvas-container {
+  display: flex;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 350px;
+  overflow: auto;
+}
+
+.roi-canvas {
+  cursor: crosshair;
+  border: 2px solid rgba(0, 212, 255, 0.3);
+  border-radius: 4px;
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.roi-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 150px;
+  color: #667;
+  font-size: 13px;
+}
+
+.roi-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(0, 20, 50, 0.3);
+  border-top: 1px solid rgba(0, 212, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.roi-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.roi-btn-secondary {
+  background: rgba(100, 100, 120, 0.3);
+  border: 1px solid rgba(100, 100, 120, 0.5);
+  color: #aab;
+}
+
+.roi-btn-secondary:hover {
+  background: rgba(100, 100, 120, 0.5);
+}
+
+.roi-btn-primary {
+  background: linear-gradient(135deg, #00d4ff, #0080ff);
+  color: #fff;
+}
+
+.roi-btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 212, 255, 0.4);
+}
+
+.roi-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+</style>

@@ -35,7 +35,7 @@ print("CameraService instance created.")
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "message": "Backend is running"}
+    return {"status": "ok", "message": "Backend2 is running"}
 
 
 @app.get("/check_camera")
@@ -44,7 +44,6 @@ def check_camera(index: int = 0):
     cap = cv2.VideoCapture(index)
 
     if cap.isOpened():
-        # Try to read a frame to confirm camera is working
         ret, frame = cap.read()
         cap.release()
 
@@ -58,7 +57,7 @@ def check_camera(index: int = 0):
 
 
 @app.post("/start")
-def start(source: str = "0", calibration: float = 1.0, output_folder: str = "session_output"):
+def start(source: str = "0", calibration: float = 1.0, output_folder: str = "session_output", fps: float = 30.0):
 
     if source.isdigit():
         source_val = int(source)
@@ -66,13 +65,13 @@ def start(source: str = "0", calibration: float = 1.0, output_folder: str = "ses
         source_val = source  # video file path
 
     camera_service.save_dir = output_folder
+    camera_service.target_fps = fps if fps > 0 else 30.0
 
     try:
         camera_service.start(source=source_val, calibration=calibration)
-        return {"status": "started", "success": True}
+        return {"status": "started", "success": True, "fps": camera_service.target_fps}
     except Exception as e:
         return {"status": "error", "success": False, "message": str(e)}
-
 
 
 @app.post("/stop")
@@ -85,6 +84,37 @@ def stop():
 def set_zero():
     camera_service.set_reference()
     return {"status": "reference_set"}
+
+
+@app.post("/set_fps")
+def set_fps(value: float = 30.0):
+    """Change target FPS on-the-fly while running"""
+    camera_service.target_fps = value if value > 0 else 30.0
+    return {"status": "fps_set", "fps": camera_service.target_fps}
+
+
+@app.post("/set_calibration")
+def set_calibration(value: float = 1.0):
+    """Change calibration factor on-the-fly"""
+    camera_service.set_calibration(value)
+    return {"status": "calibration_set", "value": value}
+
+
+@app.post("/set_auto_lighting")
+def set_auto_lighting(enabled: bool = True, clip_limit: float = 2.0):
+    """Enable/disable auto lighting adjustment and set CLAHE clip limit"""
+    camera_service.set_auto_lighting(enabled, clip_limit)
+    return {
+        "status": "auto_lighting_set",
+        "enabled": camera_service.auto_lighting_enabled,
+        "clip_limit": camera_service.clahe_clip_limit
+    }
+
+
+@app.get("/auto_lighting")
+def get_auto_lighting():
+    """Get current auto lighting settings"""
+    return camera_service.get_auto_lighting_settings()
 
 
 @app.get("/level")

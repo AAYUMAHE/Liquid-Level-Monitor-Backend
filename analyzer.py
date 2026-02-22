@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
+
 class ResultAnalyzer:
     def get_subpixel_row(self, edge_map):
         p = gaussian_filter1d(np.mean(edge_map, 1), 1.0)

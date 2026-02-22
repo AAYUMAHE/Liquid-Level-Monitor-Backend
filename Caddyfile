@@ -1,0 +1,8 @@
+
+www.hire.aayushkundalwal.tech {
+  redir https://hire.aayushkundalwal.tech{uri}
+}
+
+hire.aayushkundalwal.tech {
+  reverse_proxy localhost:8000
+}
